@@ -35,6 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--oda-path", help="Path to ODAFileConverter executable")
     convert.add_argument("--dpi", type=int, default=300, help="PDF render DPI")
     convert.add_argument(
+        "--raster-upscale",
+        type=int,
+        choices=(1, 2, 3),
+        default=2,
+        help="Maximum automatic upscale for low-resolution PNG/JPG inputs",
+    )
+    convert.add_argument(
         "--max-page-megapixels",
         type=float,
         default=25.0,
@@ -109,6 +116,7 @@ def run_convert(args: argparse.Namespace) -> int:
         ),
         pixels_per_unit=args.pixels_per_unit,
         auto_pdf_scale=not args.no_auto_pdf_scale,
+        max_raster_upscale=args.raster_upscale,
         auto_mode=not args.manual,
         max_iterations=max(1, args.passes),
         desired_score=max(0.0, min(args.target_score / 100.0, 1.0)),

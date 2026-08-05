@@ -24,6 +24,7 @@ def test_auto_mode_forces_blurred_input_through_recovery_passes(tmp_path):
             desired_score=0.0,
             min_line_length=16,
             contour_min_area=60,
+            auto_upscale_low_resolution=False,
         ),
         feedback_path=tmp_path / "feedback.jsonl",
     )

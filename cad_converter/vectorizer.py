@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import atan2, degrees, hypot
+from math import atan2, degrees, hypot, pi
 
 import cv2
 import numpy as np
@@ -106,6 +106,9 @@ class RasterVectorizer:
     def _detect_circles(self, mask: np.ndarray) -> list[CadEntity]:
         height, width = mask.shape[:2]
         max_radius = self.config.max_circle_radius or max(8, min(height, width) // 4)
+        circular_contours = self._circular_contours(mask, max_radius)
+        if not circular_contours:
+            return []
         softened = cv2.GaussianBlur(mask, (5, 5), 1.2)
         raw_circles = cv2.HoughCircles(
             softened,
@@ -132,7 +135,16 @@ class RasterVectorizer:
             # HoughCircles often proposes circles around rectangle corners and
             # character fragments.  A real circle needs ink around most of its
             # circumference and should be substantially inside the page.
-            if inside_ratio < 0.90 or support_ratio < 0.52:
+            if (
+                inside_ratio < 0.90
+                or support_ratio < self.config.min_circle_support
+                or not self._matches_circular_contour(
+                    float(x),
+                    float(y),
+                    float(radius),
+                    circular_contours,
+                )
+            ):
                 continue
             entity = CadEntity(
                 kind="CIRCLE",
@@ -145,6 +157,63 @@ class RasterVectorizer:
             if not any(self._is_same_circle(entity, existing) for existing in accepted):
                 accepted.append(entity)
         return accepted
+
+    def _circular_contours(
+        self,
+        mask: np.ndarray,
+        max_radius: int,
+    ) -> list[tuple[float, float, float]]:
+        """Return closed contours that have strong geometric circle evidence.
+
+        Dense text and table grids can accidentally support many Hough circles.
+        Requiring a matching round contour makes circle detection conservative;
+        an uncertain curved outline is still retained later as an editable
+        polyline instead of becoming a destructive oversized CIRCLE entity.
+        """
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        candidates: list[tuple[float, float, float]] = []
+        minimum_area = pi * max(float(self.config.min_circle_radius), 1.0) ** 2 * 0.35
+        for contour in contours:
+            if len(contour) < 12:
+                continue
+            area = float(cv2.contourArea(contour))
+            perimeter = float(cv2.arcLength(contour, True))
+            if area < minimum_area or perimeter <= 0.0:
+                continue
+
+            (center_x, center_y), radius = cv2.minEnclosingCircle(contour)
+            if radius < self.config.min_circle_radius * 0.75 or radius > max_radius * 1.10:
+                continue
+            _, _, bounding_width, bounding_height = cv2.boundingRect(contour)
+            if bounding_height <= 0:
+                continue
+            aspect_ratio = bounding_width / float(bounding_height)
+            circularity = 4.0 * pi * area / (perimeter * perimeter)
+            enclosing_fill = area / max(pi * radius * radius, 1.0)
+            if not (
+                0.78 <= aspect_ratio <= 1.28
+                and circularity >= 0.82
+                and enclosing_fill >= 0.70
+            ):
+                continue
+            candidates.append((float(center_x), float(center_y), float(radius)))
+        return candidates
+
+    @staticmethod
+    def _matches_circular_contour(
+        center_x: float,
+        center_y: float,
+        radius: float,
+        contours: list[tuple[float, float, float]],
+    ) -> bool:
+        center_tolerance = max(3.0, radius * 0.22)
+        radius_tolerance = max(3.0, radius * 0.22)
+        return any(
+            hypot(center_x - contour_x, center_y - contour_y) <= center_tolerance
+            and abs(radius - contour_radius) <= radius_tolerance
+            for contour_x, contour_y, contour_radius in contours
+        )
 
     @staticmethod
     def _circle_support(
