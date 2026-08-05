@@ -1,7 +1,7 @@
 # AI CAD Converter v6
 
 โปรแกรมต้นแบบสำหรับแปลงไฟล์รูปภาพหรือ PDF เป็นแบบ CAD ที่แก้ไขได้ โดยสร้าง
-วัตถุ LINE, CIRCLE, LWPOLYLINE และ TEXT จริงในไฟล์ DXF แทนการวางรูปภาพทับในแบบ
+วัตถุ LWPOLYLINE, CIRCLE, HATCH, TEXT และ MTEXT จริงในไฟล์ DXF แทนการวางรูปภาพทับในแบบ
 
 ผลลัพธ์หลักคือ DXF R2018 ซึ่งเปิดและแก้ไขได้ใน AutoCAD และ GstarCAD หากต้องการ
 DWG โปรแกรมจะเรียก ODA File Converter ที่ติดตั้งอยู่บนเครื่องให้แปลง DXF เป็น DWG
@@ -27,6 +27,11 @@ DWG โปรแกรมจะเรียก ODA File Converter ที่ต�
 - รับไฟล์ PNG, JPG, TIFF, WEBP และ PDF ทุกหน้า
 - อ่านเส้นและข้อความจาก PDF ที่เป็น vector โดยตรงก่อน เพื่อรักษาความคมและข้อความ
   selectable; ถ้าเป็น PDF scan จะกลับไปใช้ OpenCV + Tesseract OCR อัตโนมัติ
+- อ่าน measurement scale ที่ฝังใน PDF วิศวกรรมโดยอัตโนมัติ และเลือก viewport หลัก
+  เพื่อให้ขนาด CAD ตรงกับไฟล์ต้นฉบับมากขึ้น (สามารถปิดแล้วกำหนดสเกลเองได้)
+- รวม line/curve segment ที่ต่อเนื่องกันเป็น LWPOLYLINE เพื่อลดเส้นแตกย่อย และแปลง
+  solid fill เป็น HATCH บนเลเยอร์แยก
+- เก็บข้อความ selectable จาก PDF เป็น MTEXT ที่แก้ไขได้ พร้อมตำแหน่ง สี และมุมหมุน
 - ใช้ OpenCV สร้างภาพหลายแบบ เช่น Otsu, adaptive threshold, CLAHE, ตรวจเส้นสี,
   edge preserving, gamma correction, background normalization, black-hat, morphology และ sharpen
 - Auto mode ตรวจคุณภาพไฟล์แล้วเลือกเทคนิคที่เหมาะสม โดยเก็บเหตุผลและคะแนนทุก
@@ -47,7 +52,8 @@ DWG โปรแกรมจะเรียก ODA File Converter ที่ต�
   ตรวจ Preview แล้วกดปุ่มยืนยัน
 - รับคะแนนและคำแนะนำจากผู้ใช้ เก็บไว้ภายในเครื่อง เริ่มฝึก Random Forest หลังมี
   feedback 5 งาน และเปลี่ยนเป็น neural MLP แบบ 3 hidden layers หลังมี 30 งาน
-- กำหนดสเกลได้ ปัจจุบันค่าเริ่มต้นคือ 1 pixel = 1 CAD unit
+- อ่าน measurement scale จาก PDF อัตโนมัติ หรือกำหนด Pixels per CAD unit เองเมื่อ
+  ไฟล์ไม่มีข้อมูลสเกลฝังอยู่
 
 ## สิ่งที่ต้องติดตั้ง
 
@@ -96,7 +102,8 @@ python app.py
 2. เปิด URL ที่แสดงใน Terminal
 3. เลือกรูปหรือ PDF
 4. เปิด AI Auto mode ไว้เพื่อให้ระบบเลือกวิธีและจำนวนรอบเอง
-5. หากยังไม่มีขนาดอ้างอิง ให้คง Pixels per CAD unit เป็น 1.0 ในตั้งค่าขั้นสูง
+5. สำหรับ PDF จาก CAD ให้เปิด **ใช้สเกลที่ฝังใน PDF อัตโนมัติ** หากไม่มีสเกลจึง
+   ค่อยกำหนด Pixels per CAD unit ในตั้งค่าขั้นสูง
 6. เลือกภาษา OCR เป็น tha+eng และฟอนต์ที่รองรับไทย เช่น Arial.ttf
 7. กด แปลงเป็น CAD และดู Preview
 8. ตรวจภาพ Preview ซึ่งแสดงต้นฉบับ, CAD ที่สร้าง และ QA overlay
@@ -125,6 +132,12 @@ python cli.py convert drawing.pdf --output outputs --dwg --oda-path "C:/path/to/
 
 ~~~bash
 python cli.py convert drawing.pdf --output outputs --ocr-languages tha+eng --passes 3 --zip
+~~~
+
+หากต้องการบังคับใช้ค่า `--pixels-per-unit` เองและไม่อ่านสเกลจาก PDF:
+
+~~~bash
+python cli.py convert drawing.pdf --output outputs --pixels-per-unit 100 --no-auto-pdf-scale
 ~~~
 
 บันทึก feedback จากไฟล์ report:
@@ -185,7 +198,7 @@ Free instance เหมาะสำหรับทดลอง ไม่ใช�
 หยุดเมื่อครบจำนวนรอบที่ตั้งไว้
 
 คะแนนนี้เป็นตัวช่วยเลือกผลลัพธ์ที่ใกล้รูปต้นฉบับที่สุด ไม่ใช่การรับรองว่ามิติจริง,
-scale, สัญลักษณ์วิศวกรรม, line type หรือข้อความ OCR ถูกต้อง 100% งานวิศวกรรมต้อง
+สเกล, สัญลักษณ์วิศวกรรม, line type หรือข้อความ OCR ถูกต้อง 100% งานวิศวกรรมต้อง
 ตรวจและแก้ไขใน CAD ก่อนใช้งานจริงเสมอ
 
 หากไฟล์ต้นฉบับไม่มีรายละเอียดเพราะเบลอ แตก หรือความละเอียดต่ำ ระบบสามารถเพิ่ม
@@ -199,6 +212,7 @@ cad_converter/
   decision.py       Input quality profiling and automatic strategy decisions
   preprocessing.py  OpenCV preprocessing variants
   vectorizer.py     LINE/CIRCLE/LWPOLYLINE detection and QA render
+  pdf_vector.py     Native PDF paths, embedded scale, HATCH and editable MTEXT
   ocr.py            Tesseract text extraction
   exporter.py       DXF export and optional ODA DWG export
   learning.py       Random Forest / neural MLP feedback learning

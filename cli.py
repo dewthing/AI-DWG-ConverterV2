@@ -47,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scale calibration; default is 1 pixel = 1 CAD unit",
     )
     convert.add_argument(
+        "--no-auto-pdf-scale",
+        action="store_true",
+        help="Ignore a measurement scale embedded in the PDF",
+    )
+    convert.add_argument(
         "--passes",
         type=int,
         default=3,
@@ -103,6 +108,7 @@ def run_convert(args: argparse.Namespace) -> int:
             else int(args.max_page_megapixels * 1_000_000)
         ),
         pixels_per_unit=args.pixels_per_unit,
+        auto_pdf_scale=not args.no_auto_pdf_scale,
         auto_mode=not args.manual,
         max_iterations=max(1, args.passes),
         desired_score=max(0.0, min(args.target_score / 100.0, 1.0)),

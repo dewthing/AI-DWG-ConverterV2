@@ -43,13 +43,13 @@ def export_dxf(
             modelspace.add_line(
                 _to_cad_point(entity.start, height, config.pixels_per_unit),
                 _to_cad_point(entity.end, height, config.pixels_per_unit),
-                dxfattribs={"layer": entity.layer},
+                dxfattribs=_entity_attribs(entity),
             )
         elif entity.kind == "CIRCLE" and entity.center and entity.radius is not None:
             modelspace.add_circle(
                 _to_cad_point(entity.center, height, config.pixels_per_unit),
                 entity.radius / config.pixels_per_unit,
-                dxfattribs={"layer": entity.layer},
+                dxfattribs=_entity_attribs(entity),
             )
         elif (
             entity.kind == "ARC"
@@ -63,7 +63,7 @@ def export_dxf(
                 entity.radius / config.pixels_per_unit,
                 entity.start_angle,
                 entity.end_angle,
-                dxfattribs={"layer": entity.layer},
+                dxfattribs=_entity_attribs(entity),
             )
         elif entity.kind == "LWPOLYLINE" and entity.points:
             modelspace.add_lwpolyline(
@@ -72,8 +72,29 @@ def export_dxf(
                     for point in entity.points
                 ],
                 close=entity.closed,
-                dxfattribs={"layer": entity.layer},
+                dxfattribs=_entity_attribs(entity),
             )
+        elif entity.kind == "HATCH" and len(entity.points) >= 3:
+            hatch_attributes = _entity_attribs(entity)
+            hatch_colour = int(hatch_attributes.pop("color", 7))
+            true_colour = hatch_attributes.pop("true_color", None)
+            hatch = modelspace.add_hatch(
+                color=hatch_colour,
+                dxfattribs=hatch_attributes,
+            )
+            hatch.set_solid_fill(color=hatch_colour)
+            if true_colour is not None:
+                hatch.dxf.true_color = int(true_colour)
+            for boundary in entity.boundary_paths or [entity.points]:
+                if len(boundary) < 3:
+                    continue
+                hatch.paths.add_polyline_path(
+                    [
+                        _to_cad_point(point, height, config.pixels_per_unit)
+                        for point in boundary
+                    ],
+                    is_closed=True,
+                )
         elif entity.kind == "TEXT" and entity.text and entity.bbox:
             x, y, _, text_height_pixels = entity.bbox
             insertion = _to_cad_point(
@@ -81,19 +102,24 @@ def export_dxf(
                 height,
                 config.pixels_per_unit,
             )
-            modelspace.add_text(
-                entity.text,
-                dxfattribs={
-                    "layer": entity.layer,
-                    "style": config.cad_text_style,
-                    "height": max(
-                        1.0,
-                        (entity.height or text_height_pixels)
-                        / config.pixels_per_unit,
-                    ),
-                    "insert": insertion,
-                },
+            text_height = max(
+                1e-6,
+                (entity.height or text_height_pixels) / config.pixels_per_unit,
             )
+            text_attribs = _entity_attribs(entity)
+            text_attribs.update(
+                {
+                    "style": config.cad_text_style,
+                    "insert": insertion,
+                    "rotation": float(entity.extra.get("rotation", 0.0)),
+                }
+            )
+            if entity.extra.get("native_pdf_text"):
+                text_attribs["char_height"] = text_height
+                modelspace.add_mtext(entity.text, dxfattribs=text_attribs)
+            else:
+                text_attribs["height"] = text_height
+                modelspace.add_text(entity.text, dxfattribs=text_attribs)
     document.saveas(target)
     return target
 
@@ -168,6 +194,9 @@ def _add_layers(document: ezdxf.document.Drawing, config: ConversionConfig) -> N
         "SYMBOLS": 4,
         "TEXT": 2,
         "PDF_VECTOR": 3,
+        "PDF_Geometry": 7,
+        "PDF_Solid Fills": 7,
+        "PDF_Text": 7,
     }
     for name, colour in layers.items():
         if not document.layers.has_entry(name):
@@ -186,6 +215,17 @@ def _to_cad_point(
 ) -> tuple[float, float]:
     scale = max(pixels_per_unit, 1e-9)
     return (point[0] / scale, (image_height - point[1]) / scale)
+
+
+def _entity_attribs(entity: CadEntity) -> dict[str, object]:
+    attributes: dict[str, object] = {"layer": entity.layer}
+    aci_colour = entity.extra.get("aci_color")
+    true_colour = entity.extra.get("true_color")
+    if aci_colour is not None:
+        attributes["color"] = int(aci_colour)
+    elif true_colour is not None:
+        attributes["true_color"] = int(true_colour)
+    return attributes
 
 
 def _find_oda_converter(configured_path: str | None) -> Path | None:

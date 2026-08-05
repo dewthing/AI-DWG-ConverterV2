@@ -15,15 +15,27 @@ class PreprocessVariant:
 
 
 def reference_ink_mask(image_bgr: np.ndarray) -> np.ndarray:
-    """Build a stable reference mask used only for quality comparison."""
+    """Build a stable reference mask used only for quality comparison.
+
+    Otsu alone can discard pale red, green, blue, and orange CAD layers.  The
+    saturation mask keeps that born-digital coloured linework in the QA target
+    without changing the preprocessing candidates themselves.
+    """
 
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     normalized = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
-    _, mask = cv2.threshold(
+    _, grayscale_ink = cv2.threshold(
         normalized,
         0,
         255,
         cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU,
+    )
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+    dark_ink = cv2.inRange(hsv, (0, 0, 0), (180, 255, 210))
+    coloured_ink = cv2.inRange(hsv, (0, 30, 0), (180, 255, 255))
+    mask = cv2.bitwise_or(
+        grayscale_ink,
+        cv2.bitwise_or(dark_ink, coloured_ink),
     )
     return _remove_border_noise(mask)
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import cv2
@@ -169,10 +169,35 @@ class CADConverter:
                 items=native_pdf_page.text_items,
                 strategy="native_pdf_text",
             )
+            native_pdf_text = True
         else:
             ocr_result = extract_editable_text(image_bgr, self.config)
+            native_pdf_text = False
         warnings.extend(ocr_result.warnings)
-        text_entities = _text_entities(ocr_result.items, self.config)
+        text_entities = _text_entities(
+            ocr_result.items,
+            self.config,
+            native_pdf_text=native_pdf_text,
+        )
+
+        export_config = self.config
+        embedded_scale = (
+            native_pdf_page.cad_units_per_point
+            if native_pdf_page is not None
+            else None
+        )
+        if self.config.auto_pdf_scale and embedded_scale is not None:
+            render_pixels_per_point = max(self.config.pdf_dpi, 72) / 72.0
+            effective_pixels_per_unit = render_pixels_per_point / embedded_scale
+            export_config = replace(
+                self.config,
+                pixels_per_unit=effective_pixels_per_unit,
+            )
+            warnings.append(
+                "Applied embedded PDF scale: "
+                f"1 PDF point = {embedded_scale:.10g} CAD units "
+                f"({effective_pixels_per_unit:.6g} pixels per CAD unit)."
+            )
         geometry_reference = _remove_text_from_mask(reference, ocr_result.items)
         reference_path = output_directory / f"{prefix}_geometry_reference.png"
         cv2.imwrite(str(reference_path), geometry_reference)
@@ -194,14 +219,28 @@ class CADConverter:
             candidates.append(native_candidate)
             best = native_candidate
 
-        maximum_iterations = max(1, self.config.max_iterations)
+        native_vector_match = bool(
+            best is not None
+            and best.name.startswith("native_pdf_vectors")
+            and len(native_geometry) >= 10
+            and best.metrics.tolerant_f1 >= 0.75
+        )
+        if native_vector_match:
+            warnings.append(
+                "Vector-rich PDF detected; retained native paths and skipped raster tracing."
+            )
+
+        maximum_iterations = 0 if native_vector_match else max(
+            1,
+            self.config.max_iterations,
+        )
         minimum_iterations = (
             min(maximum_iterations, profile.recommended_iterations)
             if self.config.auto_mode
             else 1
         )
         plateau_rounds = 0
-        stop_reason = "maximum_iterations"
+        stop_reason = "native_pdf_vectors" if native_vector_match else "maximum_iterations"
         for iteration in range(maximum_iterations):
             decision = self.decision_engine.decide_iteration(
                 profile,
@@ -278,14 +317,14 @@ class CADConverter:
             best.entities,
             (height, width),
             output_directory / f"{prefix}.dxf",
-            self.config,
+            export_config,
         )
         dwg_path: Path | None = None
         if self.config.export_dwg:
             dwg_result = export_dwg_with_oda(
                 dxf_path,
                 output_directory / f"{prefix}.dwg",
-                self.config,
+                export_config,
             )
             dwg_path = dwg_result.path
             if dwg_result.warning:
@@ -298,6 +337,8 @@ class CADConverter:
             "image_size": {"width": width, "height": height},
             "qa_reference": "Text regions are excluded from geometry QA and assessed separately by OCR.",
             "settings": asdict(self.config),
+            "effective_export_settings": asdict(export_config),
+            "embedded_pdf_cad_units_per_point": embedded_scale,
             "input_profile": profile.to_dict(),
             "ocr": {
                 "selected_strategy": ocr_result.strategy,
@@ -431,18 +472,35 @@ class CADConverter:
         )
 
 
-def _text_entities(items: list[OCRItem], config: ConversionConfig) -> list[CadEntity]:
+def _text_entities(
+    items: list[OCRItem],
+    config: ConversionConfig,
+    *,
+    native_pdf_text: bool = False,
+) -> list[CadEntity]:
     entities: list[CadEntity] = []
     for item in items:
         _, _, _, height = item.bbox
         entities.append(
             CadEntity(
                 kind="TEXT",
-                layer="TEXT",
+                layer="PDF_Text" if native_pdf_text else "TEXT",
                 confidence=item.confidence,
                 text=item.text,
                 height=max(1.0, height * config.text_height_multiplier),
                 bbox=item.bbox,
+                extra={
+                    "rotation": item.rotation,
+                    "font": item.font,
+                    "native_pdf_text": native_pdf_text,
+                    **(
+                        {"aci_color": 7}
+                        if item.color in {0x000000, 0xFFFFFF}
+                        else {"true_color": item.color}
+                        if item.color is not None
+                        else {}
+                    ),
+                },
             )
         )
     return entities

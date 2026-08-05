@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 
-EntityKind = Literal["LINE", "CIRCLE", "ARC", "LWPOLYLINE", "TEXT"]
+EntityKind = Literal[
+    "LINE",
+    "CIRCLE",
+    "ARC",
+    "LWPOLYLINE",
+    "HATCH",
+    "TEXT",
+]
 
 
 @dataclass(slots=True)
@@ -28,6 +35,7 @@ class CadEntity:
     start_angle: float | None = None
     end_angle: float | None = None
     points: list[tuple[float, float]] = field(default_factory=list)
+    boundary_paths: list[list[tuple[float, float]]] = field(default_factory=list)
     closed: bool = False
     text: str | None = None
     height: float | None = None
@@ -43,6 +51,9 @@ class OCRItem:
     text: str
     confidence: float
     bbox: tuple[int, int, int, int]
+    rotation: float = 0.0
+    font: str | None = None
+    color: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -85,4 +96,3 @@ class CandidateResult:
             "metrics": self.metrics.to_dict(),
             "preview_path": str(self.preview_path) if self.preview_path else None,
         }
-

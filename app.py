@@ -26,6 +26,7 @@ def convert_uploaded_file(
     uploaded_file: str | None,
     auto_mode: bool,
     pixels_per_unit: float,
+    auto_pdf_scale: bool,
     pdf_dpi: float,
     passes: float,
     target_score: float,
@@ -41,6 +42,7 @@ def convert_uploaded_file(
     output_dir = job_root / "output"
     config = ConversionConfig(
         pixels_per_unit=max(float(pixels_per_unit or 1.0), 0.000001),
+        auto_pdf_scale=bool(auto_pdf_scale),
         pdf_dpi=max(72, int(pdf_dpi or 300)),
         auto_mode=bool(auto_mode),
         max_iterations=max(1, int(passes or 3)),
@@ -164,8 +166,8 @@ def build_app() -> gr.Blocks:
             # AI Drawing → CAD
 
             อัปโหลดรูปหรือ PDF แล้วระบบจะวิเคราะห์คุณภาพ เลือกวิธีปรับภาพด้วย OpenCV,
-            อ่านข้อความด้วย Tesseract OCR, สร้าง LINE/CIRCLE/LWPOLYLINE/TEXT ที่แก้ไขได้
-            และวนตรวจ QA อัตโนมัติก่อนให้ดาวน์โหลด DXF/DWG
+            อ่านข้อความด้วย Tesseract OCR และสร้าง LWPOLYLINE, CIRCLE, HATCH,
+            TEXT หรือ MTEXT ที่แก้ไขได้ พร้อมวนตรวจ QA ก่อนดาวน์โหลด DXF/DWG
             """
         )
         conversion_state = gr.State(value={})
@@ -181,11 +183,16 @@ def build_app() -> gr.Blocks:
                     value=True,
                 )
                 with gr.Accordion("ตั้งค่าขั้นสูง", open=False):
+                    auto_pdf_scale = gr.Checkbox(
+                        label="ใช้สเกลที่ฝังใน PDF อัตโนมัติ",
+                        value=True,
+                        info="แนะนำสำหรับ PDF ที่ส่งออกจาก CAD เพื่อให้ขนาดตรงต้นฉบับ",
+                    )
                     pixels_per_unit = gr.Number(
                         label="Pixels ต่อ 1 หน่วย CAD",
                         value=1.0,
                         minimum=0.000001,
-                        info="ค่าเริ่มต้น: 1 pixel = 1 CAD unit",
+                        info="ใช้ค่านี้เมื่อ PDF ไม่มีสเกลฝังอยู่ หรือปิดสเกลอัตโนมัติ",
                     )
                     pdf_dpi = gr.Slider(
                         label="ความละเอียด PDF (DPI)",
@@ -273,6 +280,7 @@ def build_app() -> gr.Blocks:
                 uploaded_file,
                 auto_mode,
                 pixels_per_unit,
+                auto_pdf_scale,
                 pdf_dpi,
                 passes,
                 target_score,

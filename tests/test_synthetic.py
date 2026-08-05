@@ -5,6 +5,7 @@ import ezdxf
 import numpy as np
 
 from cad_converter import CADConverter, ConversionConfig
+from cad_converter.preprocessing import reference_ink_mask
 
 
 def test_synthetic_drawing_exports_editable_dxf(tmp_path):
@@ -45,3 +46,13 @@ def test_synthetic_drawing_exports_editable_dxf(tmp_path):
         for circle in circles
     )
     assert result.pages[0].preview_path.exists()
+
+
+def test_reference_mask_keeps_pale_coloured_cad_layers():
+    image = np.full((100, 160, 3), 255, dtype=np.uint8)
+    cv2.line(image, (10, 20), (150, 20), (120, 230, 170), 2)
+    cv2.line(image, (10, 50), (150, 50), (180, 190, 245), 2)
+    mask = reference_ink_mask(image)
+
+    assert np.count_nonzero(mask[18:23, 10:151]) > 200
+    assert np.count_nonzero(mask[48:53, 10:151]) > 200
