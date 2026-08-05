@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: ai-dwg-converter-v2
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /
+    autoDeployTrigger: checksPass
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: GRADIO_ANALYTICS_ENABLED
+        value: "False"
+      - key: AI_CAD_FEEDBACK_PATH
+        value: /tmp/ai-cad-data/feedback.jsonl

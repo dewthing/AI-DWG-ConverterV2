@@ -8,7 +8,7 @@ from math import atan2, degrees, hypot
 import cv2
 import numpy as np
 
-from .models import CadEntity
+from .models import CadEntity, OCRItem
 from .settings import ConversionConfig
 
 
@@ -120,18 +120,50 @@ class RasterVectorizer:
         if raw_circles is None:
             return []
 
+        support_mask = cv2.dilate(mask, np.ones((5, 5), dtype=np.uint8))
         accepted: list[CadEntity] = []
         for x, y, radius in np.round(raw_circles[0, :]).astype(int):
+            inside_ratio, support_ratio = self._circle_support(
+                support_mask,
+                x,
+                y,
+                radius,
+            )
+            # HoughCircles often proposes circles around rectangle corners and
+            # character fragments.  A real circle needs ink around most of its
+            # circumference and should be substantially inside the page.
+            if inside_ratio < 0.90 or support_ratio < 0.52:
+                continue
             entity = CadEntity(
                 kind="CIRCLE",
                 layer="GEOMETRY",
                 center=(float(x), float(y)),
                 radius=float(radius),
-                confidence=0.76,
+                confidence=min(0.99, 0.45 + 0.54 * support_ratio),
+                extra={"circumference_support": round(support_ratio, 4)},
             )
             if not any(self._is_same_circle(entity, existing) for existing in accepted):
                 accepted.append(entity)
         return accepted
+
+    @staticmethod
+    def _circle_support(
+        mask: np.ndarray,
+        center_x: int,
+        center_y: int,
+        radius: int,
+        samples: int = 180,
+    ) -> tuple[float, float]:
+        height, width = mask.shape[:2]
+        angles = np.linspace(0.0, 2.0 * np.pi, samples, endpoint=False)
+        xs = np.rint(center_x + radius * np.cos(angles)).astype(np.int32)
+        ys = np.rint(center_y + radius * np.sin(angles)).astype(np.int32)
+        inside = (xs >= 0) & (xs < width) & (ys >= 0) & (ys < height)
+        inside_count = int(np.count_nonzero(inside))
+        if inside_count == 0:
+            return 0.0, 0.0
+        support = int(np.count_nonzero(mask[ys[inside], xs[inside]]))
+        return inside_count / samples, support / inside_count
 
     @staticmethod
     def _is_same_circle(first: CadEntity, second: CadEntity) -> bool:
@@ -294,6 +326,7 @@ def make_overlay(
     source_bgr: np.ndarray,
     reference_mask: np.ndarray,
     rendered_mask: np.ndarray,
+    text_items: list[OCRItem] | None = None,
 ) -> np.ndarray:
     """Return a readable side-by-side source / reconstructed / difference preview."""
 
@@ -309,11 +342,68 @@ def make_overlay(
     overlay[overlap] = (0, 130, 0)
     overlay[only_source] = (0, 0, 220)
     overlay[only_vector] = (220, 120, 0)
+    _draw_ocr_preview(reconstruction, text_items or [], include_text=True)
+    _draw_ocr_preview(overlay, text_items or [], include_text=False)
 
     source = source_bgr.copy()
     if source.shape[:2] != (height, width):
         source = cv2.resize(source, (width, height), interpolation=cv2.INTER_AREA)
-    return np.hstack((source, reconstruction, overlay))
+    return np.hstack(
+        (
+            _with_panel_header(source, "SOURCE"),
+            _with_panel_header(reconstruction, "CAD RECONSTRUCTION"),
+            _with_panel_header(
+                overlay,
+                "QA: GREEN MATCH / RED MISSING / BLUE EXTRA / MAGENTA OCR",
+            ),
+        )
+    )
+
+
+def _draw_ocr_preview(
+    image: np.ndarray,
+    items: list[OCRItem],
+    include_text: bool,
+) -> None:
+    height, width = image.shape[:2]
+    for item in items:
+        x, y, item_width, item_height = item.bbox
+        left = max(0, min(width - 1, x))
+        top = max(0, min(height - 1, y))
+        right = max(left, min(width - 1, x + item_width))
+        bottom = max(top, min(height - 1, y + item_height))
+        cv2.rectangle(image, (left, top), (right, bottom), (180, 0, 180), 1)
+        if not include_text:
+            continue
+        ascii_text = item.text.encode("ascii", errors="ignore").decode("ascii").strip()
+        label = ascii_text[:28] if ascii_text else "OCR TEXT"
+        cv2.putText(
+            image,
+            label,
+            (left, max(12, top - 3)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.38,
+            (180, 0, 180),
+            1,
+            cv2.LINE_AA,
+        )
+
+
+def _with_panel_header(image: np.ndarray, title: str) -> np.ndarray:
+    header_height = 42
+    header = np.full((header_height, image.shape[1], 3), 245, dtype=np.uint8)
+    font_scale = max(0.42, min(0.72, image.shape[1] / 900.0))
+    cv2.putText(
+        header,
+        title,
+        (12, 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        (35, 35, 35),
+        1,
+        cv2.LINE_AA,
+    )
+    return np.vstack((header, image))
 
 
 def _as_int_point(point: tuple[float, float]) -> tuple[int, int]:

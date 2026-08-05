@@ -12,7 +12,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+    env:
+      GRADIO_ANALYTICS_ENABLED: "False"
+      HF_HUB_OFFLINE: "1"
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -35,5 +38,8 @@ jobs:
       - name: Verify source and run tests
         run: |
           python -m compileall -q app.py cad_converter cli.py run_colab.py
+          python -c "from app import build_app; build_app()"
           python -m pytest -q
 
+      - name: Build Render-compatible Docker image
+        run: docker build --tag ai-dwg-converter:test .

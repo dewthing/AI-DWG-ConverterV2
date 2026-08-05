@@ -28,9 +28,20 @@ def test_synthetic_drawing_exports_editable_dxf(tmp_path):
     result = converter.convert(source, tmp_path / "output")
 
     dxf_path = result.pages[0].dxf_path
+    circles = [
+        entity
+        for entity in result.pages[0].candidate.entities
+        if entity.kind == "CIRCLE"
+    ]
     document = ezdxf.readfile(dxf_path)
     entity_types = {entity.dxftype() for entity in document.modelspace()}
     assert dxf_path.exists()
     assert "LINE" in entity_types or "LWPOLYLINE" in entity_types
+    assert 1 <= len(circles) <= 2
+    assert any(
+        circle.center is not None
+        and abs(circle.center[0] - 390) <= 4
+        and abs(circle.center[1] - 190) <= 4
+        for circle in circles
+    )
     assert result.pages[0].preview_path.exists()
-

@@ -16,8 +16,12 @@ class ConversionConfig:
 
     pixels_per_unit: float = 1.0
     pdf_dpi: int = 300
+    max_page_pixels: int = 25_000_000
+    auto_mode: bool = True
     max_iterations: int = 3
     desired_score: float = 0.92
+    min_score_improvement: float = 0.003
+    plateau_patience: int = 2
     min_line_length: int = 18
     max_line_gap: int = 12
     hough_threshold: int = 34
@@ -29,6 +33,7 @@ class ConversionConfig:
     ocr_enabled: bool = True
     ocr_languages: str = "tha+eng"
     ocr_min_confidence: float = 30.0
+    ocr_strategy_limit: int = 3
     text_height_multiplier: float = 0.9
     cad_text_style: str = "OCR_TEXT"
     cad_text_font: str = "Arial.ttf"
