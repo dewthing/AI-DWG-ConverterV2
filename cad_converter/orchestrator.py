@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field, replace
+from math import ceil
 from pathlib import Path
 
 import cv2
@@ -116,6 +117,7 @@ class CADConverter:
                         if page_number <= len(native_pdf_pages)
                         else None
                     ),
+                    allow_raster_upscale=source.suffix.lower() != ".pdf",
                 )
             )
 
@@ -155,10 +157,30 @@ class CADConverter:
         prefix: str,
         output_directory: Path,
         native_pdf_page: PDFVectorPage | None = None,
+        allow_raster_upscale: bool = True,
     ) -> PageResult:
+        source_height, source_width = image_bgr.shape[:2]
+        processing_scale = _raster_upscale_factor(
+            source_width,
+            source_height,
+            self.config,
+            enabled=allow_raster_upscale,
+        )
+        if processing_scale > 1:
+            image_bgr = cv2.resize(
+                image_bgr,
+                (source_width * processing_scale, source_height * processing_scale),
+                interpolation=cv2.INTER_CUBIC,
+            )
         height, width = image_bgr.shape[:2]
         profile = self.decision_engine.analyse(image_bgr)
         warnings: list[str] = profile_warnings(profile)
+        if processing_scale > 1:
+            warnings.append(
+                "Upscaled low-resolution raster "
+                f"{processing_scale}x for OCR and geometry detection; "
+                "CAD export scale was compensated automatically."
+            )
         reference = reference_ink_mask(image_bgr)
         native_geometry: list[CadEntity] = []
         if native_pdf_page is not None:
@@ -180,7 +202,14 @@ class CADConverter:
             native_pdf_text=native_pdf_text,
         )
 
-        export_config = self.config
+        export_config = (
+            replace(
+                self.config,
+                pixels_per_unit=self.config.pixels_per_unit * processing_scale,
+            )
+            if processing_scale > 1
+            else self.config
+        )
         embedded_scale = (
             native_pdf_page.cad_units_per_point
             if native_pdf_page is not None
@@ -330,11 +359,23 @@ class CADConverter:
             if dwg_result.warning:
                 warnings.append(dwg_result.warning)
 
+        reported_best = (
+            _candidate_in_source_coordinates(best, processing_scale)
+            if processing_scale > 1
+            else best
+        )
+
         report_path = output_directory / f"{prefix}_report.json"
         report_payload = {
             "source_name": source_name,
             "page_number": page_number,
-            "image_size": {"width": width, "height": height},
+            "image_size": {"width": source_width, "height": source_height},
+            "source_image_size": {
+                "width": source_width,
+                "height": source_height,
+            },
+            "processing_image_size": {"width": width, "height": height},
+            "processing_scale": processing_scale,
             "qa_reference": "Text regions are excluded from geometry QA and assessed separately by OCR.",
             "settings": asdict(self.config),
             "effective_export_settings": asdict(export_config),
@@ -348,7 +389,7 @@ class CADConverter:
             },
             "decision_trace": decision_trace,
             "stop_reason": stop_reason,
-            "best_candidate": best.to_dict(),
+            "best_candidate": reported_best.to_dict(),
             "tested_candidates": [
                 {
                     "name": candidate.name,
@@ -370,7 +411,7 @@ class CADConverter:
         return PageResult(
             source_name=source_name,
             page_number=page_number,
-            candidate=best,
+            candidate=reported_best,
             dxf_path=dxf_path,
             dwg_path=dwg_path,
             preview_path=preview_path,
@@ -532,3 +573,83 @@ def _remove_text_from_mask(mask: np.ndarray, text_items: list[OCRItem]) -> np.nd
 def _safe_stem(stem: str) -> str:
     cleaned = "".join(character if character.isalnum() or character in "-_" else "_" for character in stem)
     return cleaned.strip("_") or "drawing"
+
+
+def _candidate_in_source_coordinates(
+    candidate: CandidateResult,
+    processing_scale: int,
+) -> CandidateResult:
+    factor = 1.0 / max(float(processing_scale), 1.0)
+    return replace(
+        candidate,
+        entities=[_entity_in_source_coordinates(entity, factor) for entity in candidate.entities],
+        text_items=[
+            replace(item, bbox=_scaled_bbox(item.bbox, factor))
+            for item in candidate.text_items
+        ],
+    )
+
+
+def _entity_in_source_coordinates(entity: CadEntity, factor: float) -> CadEntity:
+    def point(value: tuple[float, float] | None) -> tuple[float, float] | None:
+        if value is None:
+            return None
+        return (value[0] * factor, value[1] * factor)
+
+    return replace(
+        entity,
+        start=point(entity.start),
+        end=point(entity.end),
+        center=point(entity.center),
+        radius=entity.radius * factor if entity.radius is not None else None,
+        points=[(x * factor, y * factor) for x, y in entity.points],
+        boundary_paths=[
+            [(x * factor, y * factor) for x, y in boundary]
+            for boundary in entity.boundary_paths
+        ],
+        height=entity.height * factor if entity.height is not None else None,
+        bbox=_scaled_bbox(entity.bbox, factor) if entity.bbox is not None else None,
+    )
+
+
+def _scaled_bbox(
+    bbox: tuple[int, int, int, int],
+    factor: float,
+) -> tuple[int, int, int, int]:
+    x, y, width, height = bbox
+    return (
+        int(round(x * factor)),
+        int(round(y * factor)),
+        int(round(width * factor)),
+        int(round(height * factor)),
+    )
+
+
+def _raster_upscale_factor(
+    width: int,
+    height: int,
+    config: ConversionConfig,
+    *,
+    enabled: bool,
+) -> int:
+    """Choose a bounded integer upscale for small raster drawings.
+
+    PDF pages already honour ``pdf_dpi`` before reaching the orchestrator.  This
+    helper is therefore used only for uploaded raster images, where the PDF DPI
+    slider cannot add missing pixels.  Export compensates ``pixels_per_unit`` so
+    the drawing keeps the same CAD extents as the source image.
+    """
+
+    if not enabled or not config.auto_upscale_low_resolution:
+        return 1
+    long_edge = max(int(width), int(height), 1)
+    target = max(1, int(config.low_resolution_target_long_edge))
+    maximum = max(1, int(config.max_raster_upscale))
+    factor = min(maximum, max(1, int(ceil(target / long_edge))))
+    while (
+        factor > 1
+        and config.max_page_pixels > 0
+        and width * height * factor * factor > config.max_page_pixels
+    ):
+        factor -= 1
+    return factor

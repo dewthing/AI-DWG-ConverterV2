@@ -20,6 +20,11 @@ from cad_converter.models import CandidateMetrics
 DEFAULT_FEEDBACK_PATH = Path(
     os.environ.get("AI_CAD_FEEDBACK_PATH", "data/feedback.jsonl")
 )
+RASTER_DETAIL_SCALES = {
+    "เร็ว (ไม่ขยาย)": 1,
+    "สมดุล (ขยายสูงสุด 2x)": 2,
+    "ละเอียดสูง (ขยายสูงสุด 3x)": 3,
+}
 
 
 def convert_uploaded_file(
@@ -28,6 +33,7 @@ def convert_uploaded_file(
     pixels_per_unit: float,
     auto_pdf_scale: bool,
     pdf_dpi: float,
+    raster_detail_mode: str,
     passes: float,
     target_score: float,
     ocr_languages: str,
@@ -44,6 +50,10 @@ def convert_uploaded_file(
         pixels_per_unit=max(float(pixels_per_unit or 1.0), 0.000001),
         auto_pdf_scale=bool(auto_pdf_scale),
         pdf_dpi=max(72, int(pdf_dpi or 300)),
+        max_raster_upscale=RASTER_DETAIL_SCALES.get(
+            str(raster_detail_mode),
+            2,
+        ),
         auto_mode=bool(auto_mode),
         max_iterations=max(1, int(passes or 3)),
         desired_score=max(0.0, min(float(target_score or 92) / 100.0, 1.0)),
@@ -201,6 +211,14 @@ def build_app() -> gr.Blocks:
                         value=300,
                         step=25,
                     )
+                    raster_detail_mode = gr.Dropdown(
+                        label="รายละเอียดสำหรับ PNG/JPG ความละเอียดต่ำ",
+                        choices=list(RASTER_DETAIL_SCALES),
+                        value="สมดุล (ขยายสูงสุด 2x)",
+                        info=(
+                            "DPI มีผลเฉพาะ PDF; เลือก 3x เมื่อตัวหนังสือหรือเส้นในรูปภาพเล็กมาก"
+                        ),
+                    )
                     passes = gr.Slider(
                         label="จำนวนรอบ QA สูงสุด",
                         minimum=1,
@@ -282,6 +300,7 @@ def build_app() -> gr.Blocks:
                 pixels_per_unit,
                 auto_pdf_scale,
                 pdf_dpi,
+                raster_detail_mode,
                 passes,
                 target_score,
                 ocr_languages,

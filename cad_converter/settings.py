@@ -18,6 +18,9 @@ class ConversionConfig:
     auto_pdf_scale: bool = True
     pdf_dpi: int = 300
     max_page_pixels: int = 25_000_000
+    auto_upscale_low_resolution: bool = True
+    low_resolution_target_long_edge: int = 2200
+    max_raster_upscale: int = 2
     auto_mode: bool = True
     max_iterations: int = 3
     desired_score: float = 0.92
@@ -28,6 +31,7 @@ class ConversionConfig:
     hough_threshold: int = 34
     min_circle_radius: int = 6
     max_circle_radius: int = 0  # 0 means derive from input dimensions.
+    min_circle_support: float = 0.60
     contour_min_area: float = 100.0
     contour_epsilon_ratio: float = 0.012
     max_entities: int = 2400
