@@ -1,0 +1,62 @@
+name: Build Windows PC package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "app.py"
+      - "cli.py"
+      - "requirements.txt"
+      - "cad_converter/**"
+      - "windows/**"
+      - "SETUP_PC.bat"
+      - "START_PC.bat"
+      - "README-PC-TH.md"
+      - ".github/workflows/windows-package.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      GRADIO_ANALYTICS_ENABLED: "False"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install and verify Windows code
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+          python -m compileall -q app.py cad_converter cli.py
+          python -m pytest -q
+          python -c "from app import build_app; build_app(); print('Windows UI check passed')"
+
+      - name: Build the PC ZIP
+        shell: pwsh
+        run: |
+          $PackageName = "AI-DWG-Converter-PC-Windows"
+          $Stage = Join-Path $env:RUNNER_TEMP $PackageName
+          New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+          Copy-Item app.py, cli.py, requirements.txt, SETUP_PC.bat, START_PC.bat, README-PC-TH.md -Destination $Stage
+          Copy-Item cad_converter, windows -Destination $Stage -Recurse
+          Compress-Archive -Path $Stage -DestinationPath "$PackageName.zip" -Force
+
+      - name: Upload the PC package
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-DWG-Converter-PC-Windows
+          path: AI-DWG-Converter-PC-Windows.zip
+          if-no-files-found: error
+          retention-days: 30

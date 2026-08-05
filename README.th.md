@@ -1,4 +1,4 @@
-# AI CAD Converter
+# AI CAD Converter v6
 
 โปรแกรมต้นแบบสำหรับแปลงไฟล์รูปภาพหรือ PDF เป็นแบบ CAD ที่แก้ไขได้ โดยสร้าง
 วัตถุ LINE, CIRCLE, LWPOLYLINE และ TEXT จริงในไฟล์ DXF แทนการวางรูปภาพทับในแบบ
@@ -7,14 +7,36 @@
 DWG โปรแกรมจะเรียก ODA File Converter ที่ติดตั้งอยู่บนเครื่องให้แปลง DXF เป็น DWG
 โดยอัตโนมัติ
 
+## ขอบเขต MVP ข้อ 1–6
+
+| ข้อ | สถานะ | การทำงาน |
+|---|---|---|
+| 1. รับ PDF/รูปภาพ | พร้อมใช้ | รองรับ PDF หลายหน้าและ PNG/JPG/TIFF/WEBP/BMP/GIF |
+| 2. ส่งออก CAD | พร้อมใช้ | สร้าง DXF ที่แก้ไขได้โดยตรง และสร้าง DWG ผ่าน ODA File Converter เมื่อเครื่องมีโปรแกรมดังกล่าว |
+| 3. AI/ML/Neural learning | พร้อมใช้แบบเป็นขั้น | Auto decision เลือกวิธีประมวลผล, Random Forest เริ่มที่ feedback 5 งาน และ neural MLP เริ่มที่ 30 งาน |
+| 4. Check and loop | พร้อมใช้ | สร้าง candidate หลายแบบ, render CAD กลับเป็นภาพ, เทียบ QA และวนจนถึงเป้าหมาย/คะแนนไม่ดีขึ้น/ครบจำนวนรอบ |
+| 5. AI เป็นผู้กำหนด | พร้อมใช้ใน Auto mode | วิเคราะห์ blur, contrast, แสง, noise, สี และความหนาแน่นของแบบ แล้วเลือก preprocessing และจำนวนรอบเอง |
+| 6. UX/UI Preview | พร้อมใช้ | Gradio UI แสดงต้นฉบับ, CAD reconstruction และ QA overlay ก่อนปล่อยไฟล์ดาวน์โหลด |
+
+ตัว neural MLP ในเวอร์ชันนี้เป็นโมเดลจัดอันดับผลการแปลงจาก feedback ไม่ใช่โมเดล
+มองภาพสำหรับจำแนกอุปกรณ์ การทำ Deep Vision เช่น YOLO/segmentation ต้องมีแบบที่ติด label
+จริงก่อน จึงจะพัฒนาอย่างถูกต้องและพร้อมนำไปต่อในข้อ 7 (นับอุปกรณ์และ BOQ)
+
 ## ความสามารถที่มี
 
 - รับไฟล์ PNG, JPG, TIFF, WEBP และ PDF ทุกหน้า
 - อ่านเส้นและข้อความจาก PDF ที่เป็น vector โดยตรงก่อน เพื่อรักษาความคมและข้อความ
   selectable; ถ้าเป็น PDF scan จะกลับไปใช้ OpenCV + Tesseract OCR อัตโนมัติ
 - ใช้ OpenCV สร้างภาพหลายแบบ เช่น Otsu, adaptive threshold, CLAHE, ตรวจเส้นสี,
-  edge preserving, gamma correction, morphology และ sharpen
-- วนประมวลผลหลายรอบ แล้วให้คะแนนการสร้างวัตถุ CAD เทียบกับต้นฉบับ
+  edge preserving, gamma correction, background normalization, black-hat, morphology และ sharpen
+- Auto mode ตรวจคุณภาพไฟล์แล้วเลือกเทคนิคที่เหมาะสม โดยเก็บเหตุผลและคะแนนทุก
+  รอบไว้ในไฟล์ report JSON
+- ประมวลผล PDF ทีละหน้าและจำกัดภาพที่ถอดแล้วไว้ที่ 25 megapixels ต่อหน้า เพื่อลด
+  ปัญหา memory เต็มบนบริการฟรี; CLI ปรับได้ด้วย `--max-page-megapixels`
+- ทดลอง Tesseract OCR หลายวิธีปรับภาพ แล้วเลือกข้อความชุดที่มี confidence และ coverage
+  ดีกว่าโดยอัตโนมัติ
+- วนประมวลผลหลายรอบ แล้วให้คะแนนการสร้างวัตถุ CAD เทียบกับต้นฉบับ ระบบไม่หยุด
+  ก่อนเวลาหากตรวจพบว่าต้นฉบับเบลอหรือ contrast ต่ำ
 - ตรวจจับเส้นด้วย Hough transform, วงกลมด้วย Hough circles และสัญลักษณ์/กรอบด้วย
   contour approximation
 - ใช้ Tesseract OCR เพื่อแปลงข้อความเป็น TEXT ที่แก้ไขได้ โดยค่าเริ่มต้นคือภาษาไทย
@@ -23,8 +45,8 @@ DWG โปรแกรมจะเรียก ODA File Converter ที่ต�
   น้ำเงิน = มีใน CAD แต่ไม่อยู่ในต้นฉบับ
 - มีหน้า UX/UI สำหรับอัปโหลดและปรับค่าการแปลง โดยซ่อนลิงก์ดาวน์โหลดไว้จนผู้ใช้
   ตรวจ Preview แล้วกดปุ่มยืนยัน
-- รับคะแนนและคำแนะนำจากผู้ใช้ เก็บไว้ภายในเครื่อง และเริ่มฝึกโมเดลจัดอันดับ
-  candidate หลังมี feedback อย่างน้อย 5 งาน
+- รับคะแนนและคำแนะนำจากผู้ใช้ เก็บไว้ภายในเครื่อง เริ่มฝึก Random Forest หลังมี
+  feedback 5 งาน และเปลี่ยนเป็น neural MLP แบบ 3 hidden layers หลังมี 30 งาน
 - กำหนดสเกลได้ ปัจจุบันค่าเริ่มต้นคือ 1 pixel = 1 CAD unit
 
 ## สิ่งที่ต้องติดตั้ง
@@ -32,6 +54,13 @@ DWG โปรแกรมจะเรียก ODA File Converter ที่ต�
 ต้องมี Python 3.10 หรือใหม่กว่า และ Tesseract OCR
 
 ### Windows
+
+สำหรับชุด PC แบบแยก ให้แตกไฟล์ ZIP แล้วดับเบิลคลิก `SETUP_PC.bat` หนึ่งครั้ง
+จากนั้นใช้ `START_PC.bat` เพื่อเปิดโปรแกรมในเบราว์เซอร์ โดยมีคำแนะนำฉบับย่อใน
+`README-PC-TH.md` ชุดติดตั้งจะสร้าง Python environment เฉพาะโปรแกรมและตรวจหา
+Tesseract/ภาษาไทยให้อัตโนมัติ
+
+หากใช้ source code โดยตรง สามารถติดตั้งเองได้ดังนี้:
 
 ~~~powershell
 py -m venv .venv
@@ -66,9 +95,9 @@ python app.py
 1. รัน python app.py
 2. เปิด URL ที่แสดงใน Terminal
 3. เลือกรูปหรือ PDF
-4. ตั้ง Pixels per CAD unit เป็น 1.0 หากยังไม่มีขนาดอ้างอิง
-5. เลือกภาษา OCR เป็น tha+eng
-6. เลือกฟอนต์ CAD ที่มีอักษรไทย เช่น Arial.ttf ถ้าต้องการแสดงภาษาไทย
+4. เปิด AI Auto mode ไว้เพื่อให้ระบบเลือกวิธีและจำนวนรอบเอง
+5. หากยังไม่มีขนาดอ้างอิง ให้คง Pixels per CAD unit เป็น 1.0 ในตั้งค่าขั้นสูง
+6. เลือกภาษา OCR เป็น tha+eng และฟอนต์ที่รองรับไทย เช่น Arial.ttf
 7. กด แปลงเป็น CAD และดู Preview
 8. ตรวจภาพ Preview ซึ่งแสดงต้นฉบับ, CAD ที่สร้าง และ QA overlay
 9. กด ยืนยัน Preview แล้วแสดงไฟล์ดาวน์โหลด
@@ -106,6 +135,12 @@ python cli.py feedback outputs/drawing_page_001_report.json --score 88 --accept 
 
 ## ใช้งานบน GitHub
 
+### ดาวน์โหลดชุด Windows PC
+
+เปิดแท็บ Actions เลือก `Build Windows PC package` แล้วกด `Run workflow` เมื่อทำงาน
+เสร็จให้ดาวน์โหลด artifact ชื่อ `AI-DWG-Converter-PC-Windows` แตก ZIP แล้วทำตาม
+`README-PC-TH.md` ภายในไฟล์
+
 ### Codespaces: หน้า UI และ Preview แบบ interactive
 
 หลังอัปโค้ดขึ้น repository ให้กด Code > Codespaces > Create codespace
@@ -131,6 +166,17 @@ python cli.py feedback outputs/drawing_page_001_report.json --score 88 --accept 
 Action จะให้ DXF, QA preview และ report แต่ไม่มีหน้า Preview แบบ interactive และไม่
 สร้าง DWG บน GitHub runner
 
+## รันออนไลน์ด้วย Render
+
+โครงการมี `Dockerfile` และ `render.yaml` ซึ่งติดตั้ง OpenCV, Tesseract ภาษาไทย/อังกฤษ
+และเปิด Gradio ที่พอร์ตของ Render อัตโนมัติ ใช้ Dashboard ของ Render เลือก New >
+Blueprint แล้วเชื่อม repository นี้ ระบบจะอ่าน `render.yaml` และสร้าง web service ให้
+
+Free instance เหมาะสำหรับทดลอง ไม่ใช่ production และ filesystem เป็นแบบชั่วคราว
+ดังนั้น feedback/model ที่อยู่ใน `/tmp/ai-cad-data` อาจหายเมื่อ service restart หากต้องการ
+ให้ระบบเรียนรู้ต่อเนื่องในระยะยาว ต้องย้าย feedback ไป persistent database/object storage
+หรือใช้ persistent disk ของแผนที่รองรับ
+
 ## หลักการเลือกผลที่ดีที่สุด
 
 แต่ละภาพจะถูกปรับด้วยเทคนิคหลายแบบ แล้วแปลงเป็นวัตถุ CAD และ render กลับเป็นภาพ
@@ -142,15 +188,20 @@ Action จะให้ DXF, QA preview และ report แต่ไม่มี
 scale, สัญลักษณ์วิศวกรรม, line type หรือข้อความ OCR ถูกต้อง 100% งานวิศวกรรมต้อง
 ตรวจและแก้ไขใน CAD ก่อนใช้งานจริงเสมอ
 
+หากไฟล์ต้นฉบับไม่มีรายละเอียดเพราะเบลอ แตก หรือความละเอียดต่ำ ระบบสามารถเพิ่ม
+contrast, ลด noise และเลือกผลที่ดีที่สุดจากข้อมูลที่ยังเหลืออยู่ แต่ไม่สามารถสร้างข้อมูล
+วิศวกรรมที่ไม่มีอยู่ในต้นฉบับขึ้นมาอย่างน่าเชื่อถือได้
+
 ## โครงสร้างโครงการ
 
 ~~~text
 cad_converter/
+  decision.py       Input quality profiling and automatic strategy decisions
   preprocessing.py  OpenCV preprocessing variants
   vectorizer.py     LINE/CIRCLE/LWPOLYLINE detection and QA render
   ocr.py            Tesseract text extraction
   exporter.py       DXF export and optional ODA DWG export
-  learning.py       Local feedback learning
+  learning.py       Random Forest / neural MLP feedback learning
   orchestrator.py   Iterative conversion pipeline
 app.py              Gradio UI
 cli.py              Batch / command-line interface

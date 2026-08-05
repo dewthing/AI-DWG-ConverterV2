@@ -27,8 +27,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for CAD files and QA previews",
     )
     convert.add_argument("--dwg", action="store_true", help="Also request DWG output via ODA")
+    convert.add_argument(
+        "--manual",
+        action="store_true",
+        help="Disable automatic image profiling and evaluate all available strategies",
+    )
     convert.add_argument("--oda-path", help="Path to ODAFileConverter executable")
     convert.add_argument("--dpi", type=int, default=300, help="PDF render DPI")
+    convert.add_argument(
+        "--max-page-megapixels",
+        type=float,
+        default=25.0,
+        help="Reject pages larger than this decoded size; use 0 for no limit",
+    )
     convert.add_argument(
         "--pixels-per-unit",
         type=float,
@@ -86,7 +97,13 @@ def build_parser() -> argparse.ArgumentParser:
 def run_convert(args: argparse.Namespace) -> int:
     config = ConversionConfig(
         pdf_dpi=args.dpi,
+        max_page_pixels=(
+            0
+            if args.max_page_megapixels <= 0
+            else int(args.max_page_megapixels * 1_000_000)
+        ),
         pixels_per_unit=args.pixels_per_unit,
+        auto_mode=not args.manual,
         max_iterations=max(1, args.passes),
         desired_score=max(0.0, min(args.target_score / 100.0, 1.0)),
         ocr_enabled=not args.no_ocr,
@@ -104,7 +121,8 @@ def run_convert(args: argparse.Namespace) -> int:
         print(
             f"  page {page.page_number}: {page.dxf_path.name} | "
             f"QA {metrics.final_score * 100:.1f}% | "
-            f"{len(page.candidate.entities)} editable entities"
+            f"{len(page.candidate.entities)} editable entities | "
+            f"source {page.profile.quality_score * 100:.1f}% | {page.stop_reason}"
         )
         for warning in page.warnings:
             print(f"    warning: {warning}")

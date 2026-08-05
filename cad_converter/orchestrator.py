@@ -10,8 +10,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .decision import AutoDecisionEngine, DrawingProfile, profile_warnings
 from .exporter import export_dwg_with_oda, export_dxf
-from .image_io import read_document
+from .image_io import iter_document
 from .learning import FeedbackLearner, TrainingSummary
 from .models import CadEntity, CandidateMetrics, CandidateResult, OCRItem
 from .ocr import OCRResult, extract_editable_text
@@ -31,6 +32,9 @@ class PageResult:
     preview_path: Path
     reference_path: Path
     report_path: Path
+    profile: DrawingProfile
+    stop_reason: str
+    decision_trace: list[dict[str, object]]
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -43,6 +47,9 @@ class PageResult:
             "preview_path": str(self.preview_path),
             "reference_path": str(self.reference_path),
             "report_path": str(self.report_path),
+            "input_profile": self.profile.to_dict(),
+            "stop_reason": self.stop_reason,
+            "decision_trace": self.decision_trace,
             "warnings": self.warnings,
         }
 
@@ -72,6 +79,7 @@ class CADConverter:
         self.config = config or ConversionConfig()
         self.vectorizer = RasterVectorizer(self.config)
         self.learner = FeedbackLearner(feedback_path)
+        self.decision_engine = AutoDecisionEngine()
 
     def convert(
         self,
@@ -79,9 +87,15 @@ class CADConverter:
         output_directory: str | Path,
     ) -> DocumentResult:
         source = Path(input_path).expanduser().resolve()
+        if not source.exists():
+            raise FileNotFoundError(f"Input file not found: {source}")
         target_dir = Path(output_directory).expanduser().resolve()
         target_dir.mkdir(parents=True, exist_ok=True)
-        pages = read_document(source, dpi=self.config.pdf_dpi)
+        pages = iter_document(
+            source,
+            dpi=self.config.pdf_dpi,
+            max_page_pixels=self.config.max_page_pixels,
+        )
         native_pdf_pages: list[PDFVectorPage] = []
         if source.suffix.lower() == ".pdf":
             native_pdf_pages = extract_native_pdf_vectors(source, self.config.pdf_dpi)
@@ -143,14 +157,18 @@ class CADConverter:
         native_pdf_page: PDFVectorPage | None = None,
     ) -> PageResult:
         height, width = image_bgr.shape[:2]
-        warnings: list[str] = []
+        profile = self.decision_engine.analyse(image_bgr)
+        warnings: list[str] = profile_warnings(profile)
         reference = reference_ink_mask(image_bgr)
         native_geometry: list[CadEntity] = []
         if native_pdf_page is not None:
             native_geometry = native_pdf_page.geometry_entities
             warnings.extend(native_pdf_page.warnings)
         if native_pdf_page is not None and native_pdf_page.text_items:
-            ocr_result = OCRResult(items=native_pdf_page.text_items)
+            ocr_result = OCRResult(
+                items=native_pdf_page.text_items,
+                strategy="native_pdf_text",
+            )
         else:
             ocr_result = extract_editable_text(image_bgr, self.config)
         warnings.extend(ocr_result.warnings)
@@ -162,6 +180,7 @@ class CADConverter:
         best: CandidateResult | None = None
         seen_masks: set[str] = set()
         candidates: list[CandidateResult] = []
+        decision_trace: list[dict[str, object]] = []
         if native_geometry:
             native_candidate = self._score_entity_candidate(
                 variant_name="native_pdf_vectors",
@@ -175,8 +194,28 @@ class CADConverter:
             candidates.append(native_candidate)
             best = native_candidate
 
-        for iteration in range(max(1, self.config.max_iterations)):
-            for variant in generate_variants(image_bgr, iteration):
+        maximum_iterations = max(1, self.config.max_iterations)
+        minimum_iterations = (
+            min(maximum_iterations, profile.recommended_iterations)
+            if self.config.auto_mode
+            else 1
+        )
+        plateau_rounds = 0
+        stop_reason = "maximum_iterations"
+        for iteration in range(maximum_iterations):
+            decision = self.decision_engine.decide_iteration(
+                profile,
+                iteration,
+                auto_mode=self.config.auto_mode,
+            )
+            score_before = best.metrics.final_score if best is not None else 0.0
+            candidate_count_before = len(candidates)
+            selected_names = decision.strategies if self.config.auto_mode else None
+            for variant in generate_variants(
+                image_bgr,
+                iteration,
+                selected_names=selected_names,
+            ):
                 fingerprint = _mask_fingerprint(variant.mask)
                 if fingerprint in seen_masks:
                     continue
@@ -193,7 +232,29 @@ class CADConverter:
                 if best is None or candidate.metrics.final_score > best.metrics.final_score:
                     best = candidate
 
+            score_after = best.metrics.final_score if best is not None else 0.0
+            improvement = max(0.0, score_after - score_before)
+            if improvement < max(0.0, self.config.min_score_improvement):
+                plateau_rounds += 1
+            else:
+                plateau_rounds = 0
+            decision_trace.append(
+                {
+                    **decision.to_dict(),
+                    "tested_candidates": len(candidates) - candidate_count_before,
+                    "best_score": round(score_after, 6),
+                    "improvement": round(improvement, 6),
+                }
+            )
+
+            completed_iterations = iteration + 1
+            if completed_iterations < minimum_iterations:
+                continue
             if best is not None and best.metrics.final_score >= self.config.desired_score:
+                stop_reason = "target_score_reached"
+                break
+            if plateau_rounds >= max(1, self.config.plateau_patience):
+                stop_reason = "quality_plateau"
                 break
 
         if best is None:
@@ -203,7 +264,12 @@ class CADConverter:
             [entity for entity in best.entities if entity.kind != "TEXT"],
             (height, width),
         )
-        overlay = make_overlay(image_bgr, geometry_reference, rendered)
+        overlay = make_overlay(
+            image_bgr,
+            geometry_reference,
+            rendered,
+            text_items=ocr_result.items,
+        )
         preview_path = output_directory / f"{prefix}_qa_preview.png"
         cv2.imwrite(str(preview_path), overlay)
         best.preview_path = preview_path
@@ -232,6 +298,15 @@ class CADConverter:
             "image_size": {"width": width, "height": height},
             "qa_reference": "Text regions are excluded from geometry QA and assessed separately by OCR.",
             "settings": asdict(self.config),
+            "input_profile": profile.to_dict(),
+            "ocr": {
+                "selected_strategy": ocr_result.strategy,
+                "tested_strategies": ocr_result.tested_strategies,
+                "item_count": len(ocr_result.items),
+                "quality_score": round(ocr_result.quality_score, 6),
+            },
+            "decision_trace": decision_trace,
+            "stop_reason": stop_reason,
             "best_candidate": best.to_dict(),
             "tested_candidates": [
                 {
@@ -260,6 +335,9 @@ class CADConverter:
             preview_path=preview_path,
             reference_path=reference_path,
             report_path=report_path,
+            profile=profile,
+            stop_reason=stop_reason,
+            decision_trace=decision_trace,
             warnings=warnings,
         )
 
