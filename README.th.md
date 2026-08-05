@@ -58,8 +58,8 @@ pip install -r requirements.txt
 python app.py
 ~~~
 
-สำหรับ Colab ให้เปิดไฟล์ notebooks/AI_CAD_Converter_Colab.ipynb แล้วแก้
-REPOSITORY_URL เป็น URL ของ repository นี้
+สำหรับ Colab ให้เปิดไฟล์ notebooks/AI_CAD_Converter_Colab.ipynb แล้วอัปโหลด
+ไฟล์ ZIP ของโปรแกรมตามเซลล์แรกได้ทันที ไม่จำเป็นต้องมี GitHub
 
 ## วิธีใช้หน้าโปรแกรม
 
@@ -103,6 +103,33 @@ python cli.py convert drawing.pdf --output outputs --ocr-languages tha+eng --pas
 ~~~bash
 python cli.py feedback outputs/drawing_page_001_report.json --score 88 --accept --note "เส้นสีแดงบางเส้นยังขาด"
 ~~~
+
+## ใช้งานบน GitHub
+
+### Codespaces: หน้า UI และ Preview แบบ interactive
+
+หลังอัปโค้ดขึ้น repository ให้กด Code > Codespaces > Create codespace
+ระบบจะติดตั้ง Python dependencies, OpenCV และ Tesseract ภาษาไทย/อังกฤษให้เองครั้งแรก
+
+จาก Terminal ใน Codespaces ให้รัน:
+
+~~~bash
+./scripts/start_codespaces.sh
+~~~
+
+เปิดแท็บ Ports แล้วเลือก port 7860 เพื่อดูหน้าแปลงและ Preview ควรคง port เป็น Private
+หากแบบมีข้อมูลโครงการที่ไม่ควรเปิดเผย
+
+### GitHub Actions: แปลงแบบ batch
+
+1. ใช้ private repository หากแบบเป็นข้อมูลภายใน
+2. วาง PDF หรือรูปในโฟลเดอร์ input/ แล้ว commit ขึ้น repository
+3. เปิดแท็บ Actions เลือก Convert CAD drawing แล้วกด Run workflow
+4. ระบุ input_path เช่น input/drawing.pdf
+5. เมื่อจบงาน ดาวน์โหลด artifact ชื่อ converted-cad-result
+
+Action จะให้ DXF, QA preview และ report แต่ไม่มีหน้า Preview แบบ interactive และไม่
+สร้าง DWG บน GitHub runner
 
 ## หลักการเลือกผลที่ดีที่สุด
 

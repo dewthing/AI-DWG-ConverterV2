@@ -5,10 +5,11 @@ __pycache__/
 .venv/
 venv/
 outputs/
+workflow-output/
+workflow-output.zip
 data/*.joblib
 data/*.jsonl
 data/*.sqlite*
 *.dwg
 *.dxf
 *.zip
-

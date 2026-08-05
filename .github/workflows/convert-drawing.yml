@@ -1,0 +1,86 @@
+name: Convert CAD drawing
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_path:
+        description: "Path under input/, for example input/drawing.pdf"
+        required: true
+        default: "input/drawing.pdf"
+        type: string
+      ocr_languages:
+        description: "Tesseract language expression"
+        required: true
+        default: "tha+eng"
+        type: string
+      pdf_dpi:
+        description: "PDF render DPI"
+        required: true
+        default: "300"
+        type: string
+      passes:
+        description: "Maximum conversion passes"
+        required: true
+        default: "3"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source and selected drawing
+        uses: actions/checkout@v4
+
+      - name: Validate requested source path
+        env:
+          INPUT_PATH: ${{ inputs.input_path }}
+        run: |
+          set -euo pipefail
+          canonical_input="$(realpath -m "$INPUT_PATH")"
+          canonical_base="$(realpath -m input)"
+          case "$canonical_input" in
+            "$canonical_base"/*) ;;
+            *)
+              echo "input_path must point to a file inside input/"
+              exit 1
+              ;;
+          esac
+          test -f "$canonical_input"
+          printf 'SOURCE_FILE=%s\n' "$canonical_input" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install OCR and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-tha
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Convert to editable CAD
+        run: |
+          mkdir -p workflow-output
+          python cli.py convert "$SOURCE_FILE" \
+            --output workflow-output \
+            --ocr-languages "${{ inputs.ocr_languages }}" \
+            --dpi "${{ inputs.pdf_dpi }}" \
+            --passes "${{ inputs.passes }}" \
+            --zip
+
+      - name: Upload CAD result and QA previews
+        uses: actions/upload-artifact@v4
+        with:
+          name: converted-cad-result
+          path: |
+            workflow-output/
+            workflow-output.zip
+          if-no-files-found: error
+          retention-days: 7
+
