@@ -9,6 +9,9 @@ dist/
 outputs/
 workflow-output/
 workflow-output.zip
+tmp/
+upload/
+Aspose/
 data/*.joblib
 data/*.jsonl
 data/*.sqlite*

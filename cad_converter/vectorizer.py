@@ -289,6 +289,21 @@ def render_entities(
                 line_thickness,
                 cv2.LINE_AA,
             )
+        elif (
+            entity.kind == "HATCH"
+            and len(entity.points) >= 3
+            and not entity.extra.get("source_is_white", False)
+        ):
+            paths = [
+                np.array(
+                    [_as_int_point(point) for point in boundary],
+                    dtype=np.int32,
+                )
+                for boundary in entity.boundary_paths or [entity.points]
+                if len(boundary) >= 3
+            ]
+            if paths:
+                cv2.fillPoly(rendered, paths, 255, lineType=cv2.LINE_AA)
 
     return rendered
 

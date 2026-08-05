@@ -15,6 +15,7 @@ class ConversionConfig:
     """
 
     pixels_per_unit: float = 1.0
+    auto_pdf_scale: bool = True
     pdf_dpi: int = 300
     max_page_pixels: int = 25_000_000
     auto_mode: bool = True
